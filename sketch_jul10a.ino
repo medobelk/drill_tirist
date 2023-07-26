@@ -1,10 +1,12 @@
-#define TACHO              2
-#define WAVE_ZERO_DETECTOR 3
+#define TACHO              3
+#define WAVE_ZERO_DETECTOR 2
 #define PWR_CONTROL_PIN    4
-#define ENABLE_PIN         5
-#define GET_REVERSE_PIN    6
-#define BRAKE_PIN          7
-#define REVERSE_PIN        8
+
+#define ENABLE_PIN         7
+#define GET_REVERSE_PIN    8
+
+#define BRAKE_PIN          6
+#define REVERSE_PIN        5
 #define SPEED              A0
 #define OVERLOAD_LED_PIN   A1
 
