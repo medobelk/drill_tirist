@@ -15,6 +15,10 @@
 *   минимум - 80 об/мин - 37500 мкс -> 5 периодов
 *   В течении этих периодов считаются импульсы с таходатчика -- частота вращения шпинделя
 *   TIM1 управляет тиристором
+*
+*   не останавливать таймер а в прерывании не включать ножку если двигатель на тормозе
+*
+*
 */
 
 int tachoPulsesCounter = 0;
@@ -65,7 +69,7 @@ void setup() {
   
   //TCCR1B |= (1 << CS11) | (1 << CS10);
 
-  // setFiringAngle(5000);
+  // setFiringAngle(2000);
   // GPIO setup
   pinMode(PWR_CONTROL_PIN, OUTPUT);
   digitalWrite(PWR_CONTROL_PIN, LOW);
@@ -85,23 +89,23 @@ void countTachoPulses() {
   tachoPulsesCounter++;
 }
 
-inline void startPowerDelay() {
+inline void startPowerDelayTimer() {
   // if (!timerStatus) {
     timerStatus = true;
     TCCR1B |= timer_div; //включаем таймер
   // }
 }
 
-inline void stopPowerDelay() {
-  // if (!timerStatus) {
+inline void stopPowerDelayTimer() {
+  if (!timerStatus) {
     timerStatus = false;
     TCCR1B &= ~timer_div;  
-  // }
+  }
 }
 
 void ZC_detect() {
   if (timerStatus) {
-    startPowerDelay();
+    startPowerDelayTimer();
   }
   periodsCounter++;
   //digitalWrite(PWR_CONTROL_PIN, LOW); // выключаем ножку
@@ -128,8 +132,8 @@ ISR(TIMER1_COMPB_vect) {
 }
 
 void setFiringAngle(unsigned long microseconds) {
-  // Serial.print("setting delay to: ");
-  // Serial.println(microseconds);
+  Serial.print("setting delay to: ");
+  Serial.println(microseconds);
 
   // Convert microseconds to timer ticks
   const int on_time = 1000; // !!! перенести в init? (время запускающего импульса в мкс)
@@ -150,7 +154,7 @@ void setFiringAngle(unsigned long microseconds) {
 
 void motorBrakes(bool brakeSwitch, String dbgMsg = "") {
   if (brakeSwitch && !isOnBrakes) {
-    stopPowerDelay();
+    stopPowerDelayTimer();
     delay(1);
     digitalWrite(BRAKE_PIN, HIGH);
     Serial.println("on brakes");
@@ -172,9 +176,10 @@ void motorBrakes(bool brakeSwitch, String dbgMsg = "") {
 }
 
 bool spinUp(int desiredDelay) {
-  startPowerDelay();
   motorBrakes(false);
-
+  // startPowerDelayTimer();
+  timerStatus = true;
+  
   if (desiredDelay < spinUpCurrentDelay && spinUpCurrentDelay - desiredDelay > delaySpinUpBias) {
     spinUpCurrentDelay = spinUpCurrentDelay - delaySpinUpBias;
 
@@ -312,8 +317,8 @@ float pid(float actualPoint, float setPoint, float p, float i, float d, int iter
 
   error = setPoint - actualPoint;
   // Serial.println("er");
-  // Serial.println(setPoint);
-  // Serial.println(actualPoint);
+  Serial.println(setPoint);
+  Serial.println(actualPoint);
   // Serial.println(error);
   integral = previousIntegralError + error * iterationTime;
   derrivative = (error - previousDerrivativeError) / iterationTime;
@@ -332,7 +337,7 @@ void loop() {
   reverse = !digitalRead(GET_REVERSE_PIN);
   setSpeed = analogRead(SPEED);
   desiredDelay = map(setSpeed, 0, 1023, delayMaxMicroseconds, delayMinMicroseconds);
-
+// Serial.println(setSpeed);
   if (enable == 1) {
     isEnabled = true;
     // Serial.println("enabled");
@@ -390,7 +395,7 @@ void loop() {
     desiredFrequency = normalizeSpeedToFrequency(setSpeed) / (float)periodsCounter;
 
     tachoFrequency = tachoPulsesCounter / (float)periodsCounter;
-    delayChange = pid(tachoFrequency, desiredFrequency, 100, 0, 0, pidMeasureInterval);
+    delayChange = pid(tachoFrequency, desiredFrequency, 50, 0, 0, pidMeasureInterval);
 
     newDelay = newDelay + round(delayChange * -1); //-1 to reverse cause less value if 4000 means more speed and vice versa
 
@@ -417,11 +422,11 @@ void loop() {
   //   }
   // }
 
-  if (periodsCounter > 50) {
-    periodsCounter = periodsBeforeCalculation + 1;
-  }
+  // if (periodsCounter > 50) {
+  //   periodsCounter = periodsBeforeCalculation + 1;
+  // }
 
-  if (tachoPulsesCounter > 1000) {
-    tachoPulsesCounter = 0;
-  }
+  // if (tachoPulsesCounter > 1000) {
+  //   tachoPulsesCounter = 0;
+  // }
 }
