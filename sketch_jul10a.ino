@@ -1,5 +1,5 @@
-#define TACHO              3
 #define WAVE_ZERO_DETECTOR 2
+#define TACHO              3
 #define PWR_CONTROL_PIN    4
 
 #define ENABLE_PIN         7
@@ -18,7 +18,9 @@
 *
 *   не останавливать таймер а в прерывании не включать ножку если двигатель на тормозе
 *
-*
+*   1bit = 0.35degree
+*   (|actualRotorAngle - prevRotorAngle|) * 100 / 1024 = rounds per sec
+*   
 */
 
 int tachoPulsesCounter = 0;
@@ -69,7 +71,7 @@ void setup() {
   
   //TCCR1B |= (1 << CS11) | (1 << CS10);
 
-  // setFiringAngle(2000);
+  setFiringAngle(4000);
   // GPIO setup
   pinMode(PWR_CONTROL_PIN, OUTPUT);
   digitalWrite(PWR_CONTROL_PIN, LOW);
@@ -90,24 +92,19 @@ void countTachoPulses() {
 }
 
 inline void startPowerDelayTimer() {
-  // if (!timerStatus) {
-    timerStatus = true;
-    TCCR1B |= timer_div; //включаем таймер
-  // }
+  timerStatus = true;
+  TCCR1B |= timer_div; //включаем таймер
 }
 
 inline void stopPowerDelayTimer() {
-  if (!timerStatus) {
-    timerStatus = false;
-    TCCR1B &= ~timer_div;  
-  }
+  timerStatus = false;
+  TCCR1B &= ~timer_div;
 }
 
 void ZC_detect() {
-  if (timerStatus) {
-    startPowerDelayTimer();
-  }
+  startPowerDelayTimer();
   periodsCounter++;
+  rotorAngle = analogRead(MAGNET_TACHO);
   //digitalWrite(PWR_CONTROL_PIN, LOW); // выключаем ножку
   
   //Serial.println("0");
@@ -330,6 +327,9 @@ float pid(float actualPoint, float setPoint, float p, float i, float d, int iter
 }
 
 void loop() {
+}
+
+void loop1() {
   int setSpeed, desiredDelay, enable, reverse;
   float tachoFrequency, delayChange, desiredFrequency;
 
