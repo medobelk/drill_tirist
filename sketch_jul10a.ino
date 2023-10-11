@@ -10,6 +10,8 @@
 #define SPEED              A0
 #define OVERLOAD_LED_PIN   A1
 
+#define PWM_TEST   13
+
 /*
 *   ЕГОР ДОЛЖЕН ОТТЕСТИТЬ НАРМАЛЬНА НА АБАРУДОВАНИИ ФУНКЦИЮ setFiringAngle
 *   минимум - 80 об/мин - 37500 мкс -> 5 периодов
@@ -25,8 +27,8 @@
 
 int tachoPulsesCounter = 0;
 int periodsCounter = 0;
-float detectedMinTacho = 108.0;
-float detectedMaxTacho = 258.0;
+float detectedMinTacho = 100.0;
+float detectedMaxTacho = 255.0;
 int startDelay = 5000;
 int newDelay;
 int overloadsCount = 0;
@@ -34,13 +36,13 @@ int overloadsReverseCount = 0;
 
 float previousIntegralError, previousDerrivativeError, previousTachoPulsesCounter;
 
-const int delayMinMicroseconds = 4000;
-const int delayMaxMicroseconds = 8000;
+const int delayMinMicroseconds = 2000;
+const int delayMaxMicroseconds = 5000;
 const int periodsBeforeCalculation = 15;
 const int overloadMaxTries = 2;
 const int overloadReverseMaxTries = 4;
 
-const int delaySpinUpBias = 200;
+const int delaySpinUpBias = 50;
 
 int spinUpCurrentDelay = delayMaxMicroseconds;
 
@@ -79,9 +81,12 @@ void setup() {
   pinMode(ENABLE_PIN, INPUT_PULLUP);
   pinMode(GET_REVERSE_PIN, INPUT_PULLUP);
   pinMode(BRAKE_PIN, OUTPUT);
-  digitalWrite(BRAKE_PIN, LOW);
+  digitalWrite(BRAKE_PIN, HIGH);
   pinMode(REVERSE_PIN, OUTPUT);
   digitalWrite(REVERSE_PIN, LOW);
+  pinMode(WAVE_ZERO_DETECTOR, INPUT_PULLUP);
+
+  Serial.println("start");
 
   attachInterrupt(digitalPinToInterrupt(WAVE_ZERO_DETECTOR), ZC_detect, FALLING);       // Enable external interrupt (INT0) 
   attachInterrupt(digitalPinToInterrupt(TACHO), countTachoPulses, RISING);
@@ -93,16 +98,14 @@ void countTachoPulses() {
 
 inline void startPowerDelayTimer() {
   timerStatus = true;
-  TCCR1B |= timer_div; //включаем таймер
 }
 
 inline void stopPowerDelayTimer() {
   timerStatus = false;
-  TCCR1B &= ~timer_div;
 }
 
 void ZC_detect() {
-  startPowerDelayTimer();
+  TCCR1B |= timer_div; //включаем таймер
   periodsCounter++;
   rotorAngle = analogRead(MAGNET_TACHO);
   //digitalWrite(PWR_CONTROL_PIN, LOW); // выключаем ножку
@@ -112,7 +115,9 @@ void ZC_detect() {
 
 // Timer1 compare match interrupt handler
 ISR(TIMER1_COMPA_vect) {
-  digitalWrite(PWR_CONTROL_PIN, HIGH); // включаем ножку
+  if (timerStatus) {
+    digitalWrite(PWR_CONTROL_PIN, HIGH); // включаем ножку
+  }
   // Serial.println(6);
   //inline delay(1);
   //delayMicroseconds(1000);
@@ -129,8 +134,8 @@ ISR(TIMER1_COMPB_vect) {
 }
 
 void setFiringAngle(unsigned long microseconds) {
-  Serial.print("setting delay to: ");
-  Serial.println(microseconds);
+  // Serial.print("setting delay to: ");
+  // Serial.println(microseconds);
 
   // Convert microseconds to timer ticks
   const int on_time = 1000; // !!! перенести в init? (время запускающего импульса в мкс)
@@ -152,7 +157,7 @@ void setFiringAngle(unsigned long microseconds) {
 void motorBrakes(bool brakeSwitch, String dbgMsg = "") {
   if (brakeSwitch && !isOnBrakes) {
     stopPowerDelayTimer();
-    delay(1);
+    delay(50);
     digitalWrite(BRAKE_PIN, HIGH);
     Serial.println("on brakes");
 
@@ -162,6 +167,8 @@ void motorBrakes(bool brakeSwitch, String dbgMsg = "") {
 
   if (!brakeSwitch && isOnBrakes) {
     digitalWrite(BRAKE_PIN, LOW);
+    delay(50);
+    startPowerDelayTimer();
 
     Serial.println("no brakes");
     isOnBrakes = false;
@@ -175,7 +182,7 @@ void motorBrakes(bool brakeSwitch, String dbgMsg = "") {
 bool spinUp(int desiredDelay) {
   motorBrakes(false);
   // startPowerDelayTimer();
-  timerStatus = true;
+  // timerStatus = true;
   
   if (desiredDelay < spinUpCurrentDelay && spinUpCurrentDelay - desiredDelay > delaySpinUpBias) {
     spinUpCurrentDelay = spinUpCurrentDelay - delaySpinUpBias;
@@ -206,7 +213,7 @@ bool detectOverload() {
 
   // if (isEnabled && spinUpStatus) {
   if (isEnabled) {
-    if (tachoPulsesCounter == 0) {
+    if (tachoPulsesCounter == 0 && previousTachoPulsesCounter == 0) {
       overloadsCount++;
 
       if (overloadsCount >= overloadMaxTries) {
@@ -249,7 +256,7 @@ bool checkReverse(int reverse) {
   }
 
   if (reverse && !isReversed) {
-    if (tachoPulsesCounter == 0) {
+    if (tachoPulsesCounter == 0 && previousTachoPulsesCounter == 0) {
       setMotorToReverse(true);
     } else {
       motorBrakes(true, "reversing");
@@ -259,7 +266,7 @@ bool checkReverse(int reverse) {
   }
 
   if (!reverse && isReversed) {
-    if (tachoPulsesCounter == 0) {
+    if (tachoPulsesCounter == 0 && previousTachoPulsesCounter == 0) {
       setMotorToReverse(false);
     } else {
       motorBrakes(true, "no reversing");
@@ -314,8 +321,8 @@ float pid(float actualPoint, float setPoint, float p, float i, float d, int iter
 
   error = setPoint - actualPoint;
   // Serial.println("er");
-  Serial.println(setPoint);
-  Serial.println(actualPoint);
+  // Serial.println(setPoint);
+  // Serial.println(actualPoint);
   // Serial.println(error);
   integral = previousIntegralError + error * iterationTime;
   derrivative = (error - previousDerrivativeError) / iterationTime;
@@ -326,18 +333,22 @@ float pid(float actualPoint, float setPoint, float p, float i, float d, int iter
   return output;
 }
 
-void loop() {
+void loop1() {
+  int a;
+  a = digitalRead(WAVE_ZERO_DETECTOR);
+  Serial.println(a);
 }
 
-void loop1() {
+void loop() {
   int setSpeed, desiredDelay, enable, reverse;
   float tachoFrequency, delayChange, desiredFrequency;
 
   enable = digitalRead(ENABLE_PIN);
+  // Serial.println(enable);
   reverse = !digitalRead(GET_REVERSE_PIN);
   setSpeed = analogRead(SPEED);
   desiredDelay = map(setSpeed, 0, 1023, delayMaxMicroseconds, delayMinMicroseconds);
-// Serial.println(setSpeed);
+
   if (enable == 1) {
     isEnabled = true;
     // Serial.println("enabled");
@@ -353,7 +364,7 @@ void loop1() {
     return;
   }
 
-  if (setSpeed <= 5) {
+  if (setSpeed <= 15) {
     isEnabled = false;
 
     if (isOverloaded) {
@@ -368,46 +379,47 @@ void loop1() {
 
   reversing = checkReverse(reverse);
 
-  // Serial.println(reversing);
+  // Serial.println(spinUpStatus);
 
   if (!spinUpStatus && !isOverloaded && !reversing) {
     spinUpStatus = spinUp(desiredDelay);
   }
 
-  // Serial.println(tachoPulsesCounter);
+  if (periodsCounter >= periodsBeforeCalculation) { //interval =  periodsBeforeCalculation * 10 ms
+    if (spinUpStatus || reversing) {
+      isOverloaded = detectOverload();
+      // isOverloaded = false;
 
-  if (periodsCounter >= periodsBeforeCalculation && (spinUpStatus || reversing)) { //interval =  periodsBeforeCalculation * 10 ms
-    isOverloaded = detectOverload();
-
-    if (isOverloaded) {
-      if (!reverse) {
-        motorBrakes(true, "overloaded");
+      if (isOverloaded) {
+        if (!reverse) {
+          motorBrakes(true, "overloaded");
+        }
+        
+        return;
       }
-      
-      return;
+
+      // motorBrakes(false);
+
+      // setFiringAngle(speedTest);
+      // setFiringAngle(calculateAngle());
+      previousTachoPulsesCounter = tachoPulsesCounter;
+      desiredFrequency = normalizeSpeedToFrequency(setSpeed) / (float)periodsCounter;
+
+      tachoFrequency = tachoPulsesCounter / (float)periodsCounter;
+      delayChange = pid(tachoFrequency, desiredFrequency, 50, 0, 0, pidMeasureInterval);
+
+      newDelay = newDelay + round(delayChange * -1); //-1 to reverse cause less value if 4000 means more speed and vice versa
+
+      if (newDelay < delayMinMicroseconds) {
+        newDelay = delayMinMicroseconds;
+      }
+
+      if (newDelay > delayMaxMicroseconds) {
+        newDelay = delayMaxMicroseconds;
+      }
+
+      setFiringAngle(newDelay);
     }
-
-    // motorBrakes(false);
-
-    // setFiringAngle(speedTest);
-    // setFiringAngle(calculateAngle());
-    previousTachoPulsesCounter = tachoPulsesCounter;
-    desiredFrequency = normalizeSpeedToFrequency(setSpeed) / (float)periodsCounter;
-
-    tachoFrequency = tachoPulsesCounter / (float)periodsCounter;
-    delayChange = pid(tachoFrequency, desiredFrequency, 50, 0, 0, pidMeasureInterval);
-
-    newDelay = newDelay + round(delayChange * -1); //-1 to reverse cause less value if 4000 means more speed and vice versa
-
-    if (newDelay < delayMinMicroseconds) {
-      newDelay = delayMinMicroseconds;
-    }
-
-    if (newDelay > delayMaxMicroseconds) {
-      newDelay = delayMaxMicroseconds;
-    }
-
-    setFiringAngle(newDelay);
 
     periodsCounter = 0;
     tachoPulsesCounter = 0;
